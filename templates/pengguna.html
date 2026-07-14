@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block title %}Pengguna - BayPOS{% endblock %}
+{% block content %}
+<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+  <h1 class="page-title" style="margin:0;">Pengguna & Kasir</h1>
+  <button class="btn" onclick="openUserModal()">+ Tambah Pengguna</button>
+</div>
+
+<div class="card">
+  <table>
+    <thead><tr><th>Username</th><th>Role</th><th></th></tr></thead>
+    <tbody id="userTable"></tbody>
+  </table>
+</div>
+
+<div class="modal-backdrop" id="userModal" style="display:none;">
+  <div class="modal-box">
+    <h3>Pengguna Baru</h3>
+    <div class="field">
+      <label>Username</label>
+      <input type="text" id="fUsername">
+    </div>
+    <div class="field">
+      <label>Password</label>
+      <input type="password" id="fPassword">
+    </div>
+    <div class="field">
+      <label>Role</label>
+      <select id="fRole">
+        <option value="kasir">Kasir</option>
+        <option value="admin">Admin</option>
+        <option value="owner">Owner</option>
+      </select>
+    </div>
+    <div id="userError" class="flash-error" style="display:none;"></div>
+    <div style="display:flex; gap:10px;">
+      <button class="btn secondary block" onclick="closeUserModal()">Batal</button>
+      <button class="btn block" onclick="saveUser()">Simpan</button>
+    </div>
+  </div>
+</div>
+
+<script>
+async function loadUsers() {
+  const res = await fetch("/api/pengguna");
+  const data = await res.json();
+  document.getElementById("userTable").innerHTML = data.map(u => `
+    <tr>
+      <td>${u.username}</td>
+      <td><span class="badge ok">${u.role}</span></td>
+      <td><button class="btn danger" style="padding:6px 10px; font-size:12px;" onclick="deleteUser(${u.id}, '${u.username}')">Hapus</button></td>
+    </tr>
+  `).join("");
+}
+
+function openUserModal() {
+  document.getElementById("fUsername").value = "";
+  document.getElementById("fPassword").value = "";
+  document.getElementById("fRole").value = "kasir";
+  document.getElementById("userError").style.display = "none";
+  document.getElementById("userModal").style.display = "flex";
+}
+function closeUserModal() { document.getElementById("userModal").style.display = "none"; }
+
+async function saveUser() {
+  const payload = {
+    username: document.getElementById("fUsername").value.trim(),
+    password: document.getElementById("fPassword").value,
+    role: document.getElementById("fRole").value,
+  };
+  const errBox = document.getElementById("userError");
+
+  if (!payload.username || !payload.password) {
+    errBox.textContent = "Username dan password wajib diisi";
+    errBox.style.display = "block";
+    return;
+  }
+
+  const res = await fetch("/api/pengguna", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+
+  if (!res.ok) {
+    errBox.textContent = data.error || "Gagal menyimpan";
+    errBox.style.display = "block";
+    return;
+  }
+
+  closeUserModal();
+  loadUsers();
+}
+
+async function deleteUser(id, username) {
+  if (!confirm(`Hapus pengguna "${username}"?`)) return;
+  const res = await fetch(`/api/pengguna/${id}`, { method: "DELETE" });
+  const data = await res.json();
+  if (!res.ok) { alert(data.error); return; }
+  loadUsers();
+}
+
+loadUsers();
+</script>
+{% endblock %}

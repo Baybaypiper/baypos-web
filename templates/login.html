@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login - BayPOS</title>
+  <link rel="icon" href="{{ url_for('static', filename='logo.png') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  <style>
+    body { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+    .login-box { width: 100%; max-width: 340px; text-align: center; }
+    .login-box img { width: 64px; height: 64px; border-radius: 14px; margin-bottom: 10px; }
+    .login-box h1 { font-size: 22px; margin: 0 0 24px; }
+    .login-box .field { text-align: left; margin-bottom: 14px; }
+  </style>
+</head>
+<body>
+  <div class="login-box card">
+    <img src="{{ url_for('static', filename='logo.png') }}" alt="BayPOS">
+    <h1>Masuk ke BayPOS</h1>
+
+    {% if error %}
+    <div class="flash-error">{{ error }}</div>
+    {% endif %}
+
+    <form method="post">
+      <div class="field">
+        <label>Username</label>
+        <input type="text" name="username" required autofocus>
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <input type="password" name="password" required>
+      </div>
+      <button type="submit" class="btn block">Masuk</button>
+    </form>
+  </div>
+</body>
+</html>

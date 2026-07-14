@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Dashboard - BayPOS{% endblock %}
+{% block content %}
+<h1 class="page-title">Dashboard</h1>
+
+<div class="stat-grid" id="statGrid">
+  <div class="stat-card">
+    <div class="label">Omzet Hari Ini</div>
+    <div class="value" id="omzetHariIni">Rp0</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Transaksi Hari Ini</div>
+    <div class="value" id="trxHariIni">0</div>
+  </div>
+  <div class="stat-card warn">
+    <div class="label">Produk Stok Minim</div>
+    <div class="value" id="stokMinim">0</div>
+  </div>
+</div>
+
+<div class="card">
+  <h3 style="margin-top:0;">Selamat datang, {{ session.username }} 👋</h3>
+  <p style="color:var(--text-muted);">
+    Role kamu: <strong>{{ session.role }}</strong>.
+    Gunakan menu di samping (atau bawah di HP/tablet) untuk mulai transaksi di halaman Kasir.
+  </p>
+</div>
+
+<script>
+function rupiah(n) {
+  return "Rp" + Math.round(n).toLocaleString("id-ID");
+}
+
+fetch("/api/dashboard")
+  .then(r => r.json())
+  .then(d => {
+    document.getElementById("omzetHariIni").textContent = rupiah(d.omzet_hari_ini);
+    document.getElementById("trxHariIni").textContent = d.transaksi_hari_ini;
+    document.getElementById("stokMinim").textContent = d.produk_stok_minim;
+  });
+</script>
+{% endblock %}

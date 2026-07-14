@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% block title %}Laporan - BayPOS{% endblock %}
+{% block content %}
+<h1 class="page-title">Laporan Penjualan</h1>
+
+<div class="card" style="margin-bottom:16px; display:flex; gap:10px; align-items:end; flex-wrap:wrap;">
+  <div class="field" style="margin:0;">
+    <label>Dari Tanggal</label>
+    <input type="date" id="startDate">
+  </div>
+  <div class="field" style="margin:0;">
+    <label>Sampai Tanggal</label>
+    <input type="date" id="endDate">
+  </div>
+  <button class="btn" onclick="loadLaporan()">Terapkan</button>
+</div>
+
+<div class="stat-grid">
+  <div class="stat-card">
+    <div class="label">Omzet</div>
+    <div class="value" id="statOmzet">Rp0</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Modal (HPP)</div>
+    <div class="value" id="statModal">Rp0</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Laba Kotor</div>
+    <div class="value" id="statLaba" style="color:var(--primary-dark);">Rp0</div>
+  </div>
+  <div class="stat-card">
+    <div class="label">Jumlah Transaksi</div>
+    <div class="value" id="statJumlah">0</div>
+  </div>
+</div>
+
+<div class="card" style="margin-bottom:16px;">
+  <h3 style="margin-top:0;">Produk Terlaris</h3>
+  <table>
+    <thead><tr><th>Produk</th><th>Qty Terjual</th><th>Omzet</th></tr></thead>
+    <tbody id="terlaris"></tbody>
+  </table>
+</div>
+
+<div class="card">
+  <h3 style="margin-top:0;">Riwayat Transaksi</h3>
+  <table>
+    <thead><tr><th>ID</th><th>Tanggal</th><th>Metode</th><th>Total</th></tr></thead>
+    <tbody id="riwayat"></tbody>
+  </table>
+</div>
+
+<script>
+function rupiah(n) {
+  return "Rp" + Math.round(n).toLocaleString("id-ID");
+}
+
+async function loadLaporan() {
+  const start = document.getElementById("startDate").value;
+  const end = document.getElementById("endDate").value;
+
+  let url = "/api/laporan";
+  const params = [];
+  if (start) params.push(`start=${start}`);
+  if (end) params.push(`end=${end}`);
+  if (params.length) url += "?" + params.join("&");
+
+  const res = await fetch(url);
+  const data = await res.json();
+
+  document.getElementById("statOmzet").textContent = rupiah(data.summary.omzet);
+  document.getElementById("statModal").textContent = rupiah(data.summary.modal);
+  document.getElementById("statLaba").textContent = rupiah(data.summary.laba);
+  document.getElementById("statJumlah").textContent = data.summary.jumlah_transaksi;
+
+  document.getElementById("terlaris").innerHTML = data.produk_terlaris.length
+    ? data.produk_terlaris.map(p => `
+        <tr><td>${p.nama_produk || "-"}</td><td>${p.total_qty}</td><td>${rupiah(p.total_omzet)}</td></tr>
+      `).join("")
+    : `<tr><td colspan="3" style="text-align:center; color:var(--text-muted);">Belum ada data</td></tr>`;
+
+  document.getElementById("riwayat").innerHTML = data.transaksi.length
+    ? data.transaksi.map(t => `
+        <tr><td>#${t.id}</td><td>${t.tanggal}</td><td>${t.metode}</td><td>${rupiah(t.total)}</td></tr>
+      `).join("")
+    : `<tr><td colspan="4" style="text-align:center; color:var(--text-muted);">Belum ada transaksi</td></tr>`;
+}
+
+loadLaporan();
+</script>
+{% endblock %}

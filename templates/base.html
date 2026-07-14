@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <title>{% block title %}BayPOS{% endblock %}</title>
+  <link rel="icon" href="{{ url_for('static', filename='logo.png') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <img src="{{ url_for('static', filename='logo.png') }}" alt="BayPOS">
+        BayPOS
+      </div>
+      <nav>
+        <a href="{{ url_for('dashboard') }}" class="{{ 'active' if active=='dashboard' else '' }}">📊 Dashboard</a>
+        <a href="{{ url_for('kasir') }}" class="{{ 'active' if active=='kasir' else '' }}">🛒 Kasir</a>
+        {% if session.role in ['owner', 'admin'] %}
+        <a href="{{ url_for('produk') }}" class="{{ 'active' if active=='produk' else '' }}">📦 Produk</a>
+        <a href="{{ url_for('laporan') }}" class="{{ 'active' if active=='laporan' else '' }}">📈 Laporan</a>
+        {% endif %}
+        {% if session.role == 'owner' %}
+        <a href="{{ url_for('pengguna') }}" class="{{ 'active' if active=='pengguna' else '' }}">👥 Pengguna</a>
+        {% endif %}
+      </nav>
+      <div class="user-box">
+        {{ session.username }} &middot; <strong>{{ session.role }}</strong><br>
+        <a href="{{ url_for('logout') }}" class="logout">Keluar</a>
+      </div>
+    </aside>
+
+    <main class="main-content">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+
+  <nav class="bottom-nav">
+    <a href="{{ url_for('dashboard') }}" class="{{ 'active' if active=='dashboard' else '' }}">📊<span>Dashboard</span></a>
+    <a href="{{ url_for('kasir') }}" class="{{ 'active' if active=='kasir' else '' }}">🛒<span>Kasir</span></a>
+    {% if session.role in ['owner', 'admin'] %}
+    <a href="{{ url_for('produk') }}" class="{{ 'active' if active=='produk' else '' }}">📦<span>Produk</span></a>
+    <a href="{{ url_for('laporan') }}" class="{{ 'active' if active=='laporan' else '' }}">📈<span>Laporan</span></a>
+    {% endif %}
+  </nav>
+
+  {% block extra_scripts %}{% endblock %}
+</body>
+</html>

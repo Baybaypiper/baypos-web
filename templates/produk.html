@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Produk - BayPOS{% endblock %}
+{% block content %}
+<div style="display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:16px;">
+  <h1 class="page-title" style="margin:0;">Produk</h1>
+  <button class="btn" onclick="openProdukModal()">+ Produk Baru</button>
+</div>
+
+<div class="search-bar">
+  <input type="text" id="searchInput" placeholder="🔍 Cari produk...">
+</div>
+
+<div class="card">
+  <table>
+    <thead>
+      <tr>
+        <th>Nama</th>
+        <th>Kategori</th>
+        <th>Harga Jual</th>
+        <th>Harga Modal</th>
+        <th>Stok</th>
+        <th>Status</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody id="produkTable"></tbody>
+  </table>
+</div>
+
+<!-- MODAL PRODUK -->
+<div class="modal-backdrop" id="produkModal" style="display:none;">
+  <div class="modal-box">
+    <h3 id="modalTitle">Produk Baru</h3>
+    <input type="hidden" id="fId">
+    <div class="field">
+      <label>Nama Produk</label>
+      <input type="text" id="fNama" required>
+    </div>
+    <div class="field">
+      <label>Kategori</label>
+      <select id="fKategori"></select>
+    </div>
+    <div class="field">
+      <label>Harga Jual</label>
+      <input type="number" id="fHarga" required>
+    </div>
+    <div class="field">
+      <label>Harga Modal (untuk laporan untung-rugi)</label>
+      <input type="number" id="fHargaModal">
+    </div>
+    <div class="field">
+      <label>Stok Awal</label>
+      <input type="number" id="fStok">
+    </div>
+    <div class="field">
+      <label>Stok Minimum (alert)</label>
+      <input type="number" id="fStokMinim">
+    </div>
+    <div class="field">
+      <label>Satuan</label>
+      <input type="text" id="fSatuan" placeholder="pcs / kg / liter">
+    </div>
+    <div id="produkError" class="flash-error" style="display:none;"></div>
+    <div style="display:flex; gap:10px;">
+      <button class="btn secondary block" onclick="closeProdukModal()">Batal</button>
+      <button class="btn block" onclick="saveProduk()">Simpan</button>
+    </div>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/produk.js') }}"></script>
+{% endblock %}

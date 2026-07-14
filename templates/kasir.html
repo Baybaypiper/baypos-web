@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Kasir - BayPOS{% endblock %}
+{% block content %}
+<div class="kasir-layout">
+  <div>
+    <div class="search-bar">
+      <input type="text" id="searchInput" placeholder="🔍 Cari produk...">
+    </div>
+    <div class="produk-grid" id="produkGrid"></div>
+  </div>
+
+  <div class="cart-panel">
+    <h3 style="margin:0;">🛒 Keranjang</h3>
+    <div class="cart-items" id="cartItems">
+      <p style="color:var(--text-muted); text-align:center; padding:20px 0;">Belum ada item</p>
+    </div>
+    <div class="cart-total" id="cartTotal">Rp0</div>
+    <button class="btn block" id="btnCheckout" disabled>Checkout</button>
+  </div>
+</div>
+
+<!-- MODAL CHECKOUT -->
+<div class="modal-backdrop" id="checkoutModal" style="display:none;">
+  <div class="modal-box">
+    <h3>Pembayaran</h3>
+    <div class="field">
+      <label>Metode Pembayaran</label>
+      <select id="metodeBayar">
+        <option value="Cash">Cash</option>
+        <option value="QRIS">QRIS</option>
+        <option value="Debit">Debit / Kartu</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Total Tagihan</label>
+      <input type="text" id="modalTotal" disabled>
+    </div>
+    <div class="field">
+      <label>Uang Dibayar</label>
+      <input type="number" id="modalBayar" placeholder="0" autofocus>
+    </div>
+    <div class="field">
+      <label>Kembalian</label>
+      <input type="text" id="modalKembalian" disabled>
+    </div>
+    <div id="checkoutError" class="flash-error" style="display:none;"></div>
+    <div style="display:flex; gap:10px;">
+      <button class="btn secondary block" onclick="closeCheckoutModal()">Batal</button>
+      <button class="btn block" id="btnConfirmPay">Bayar</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL STRUK -->
+<div class="modal-backdrop" id="receiptModal" style="display:none;">
+  <div class="modal-box">
+    <h3 style="text-align:center; margin-bottom:2px;">BayPOS</h3>
+    <p style="text-align:center; margin-top:0; color:var(--text-muted);">Struk Pembelian</p>
+    <div id="receiptItems"></div>
+    <div class="receipt-total">
+      <div class="receipt-line"><strong>Total</strong><strong id="rTotal"></strong></div>
+      <div class="receipt-line"><span>Bayar</span><span id="rBayar"></span></div>
+      <div class="receipt-line"><span>Kembali</span><span id="rKembali"></span></div>
+    </div>
+    <button class="btn block" style="margin-top:16px;" onclick="closeReceiptModal()">Selesai</button>
+  </div>
+</div>
+
+<script src="{{ url_for('static', filename='js/kasir.js') }}"></script>
+{% endblock %}

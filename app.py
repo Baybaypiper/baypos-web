@@ -331,6 +331,12 @@ def api_pengguna_delete(uid):
         return jsonify({"error": str(e)}), 400
 
 
+# ================= HEALTH CHECK =================
+@app.route("/healthz")
+def health_check():
+    return "OK", 200
+
+
 # ================= RUN =================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))

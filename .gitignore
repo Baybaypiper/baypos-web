@@ -1,4 +1,12 @@
+# Python
 __pycache__/
 *.pyc
-.env
+
+# Database
 *.db
+
+# Environment
+.env
+
+# VSCode
+.vscode/

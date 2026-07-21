@@ -1,29 +1,21 @@
-from database import connect
+from db import get_cursor, fetch_one, fetch_all
 from datetime import datetime
 
 
 class TransactionService:
 
+    # ================= CREATE TRANSACTION =================
     def create_transaction(self, cart, user_id, store_id, payment, metode="Cash"):
-        """
-        cart = [{"product_id": 1, "qty": 2}, ...]
 
-        Semua langkah (cek stok, insert transaksi, insert detail,
-        kurangi stok, catat mutasi) dijalankan dalam SATU koneksi &
-        SATU transaksi database -- kalau ada yang gagal di tengah,
-        semuanya di-rollback. Ini memperbaiki bug lama di mana stok
-        bisa berkurang meski transaksi gagal tercatat (atau sebaliknya).
-        """
         if not cart:
             raise ValueError("Keranjang kosong")
 
-        conn = connect()
-        c = conn.cursor()
+        with get_cursor(commit=True) as cur:
 
-        try:
             total = 0
             items_detail = []
 
+            # 🔒 LOCK semua produk yang dipakai (anti race condition)
             for item in cart:
                 product_id = item["product_id"]
                 qty = float(item["qty"])
@@ -31,63 +23,90 @@ class TransactionService:
                 if qty <= 0:
                     raise ValueError("Qty tidak valid")
 
-                c.execute("""
+                cur.execute("""
                     SELECT harga, harga_modal, stok, nama_produk
-                    FROM produk WHERE id=? AND store_id=?
+                    FROM produk
+                    WHERE id = %s AND store_id = %s
+                    FOR UPDATE
                 """, (product_id, store_id))
-                p = c.fetchone()
+
+                p = cur.fetchone()
 
                 if not p:
                     raise ValueError(f"Produk ID {product_id} tidak ditemukan")
 
-                if p["stok"] < qty:
+                if float(p["stok"]) < qty:
                     raise ValueError(f"Stok tidak cukup untuk {p['nama_produk']}")
 
-                subtotal = p["harga"] * qty
+                subtotal = float(p["harga"]) * qty
                 total += subtotal
 
                 items_detail.append({
                     "product_id": product_id,
                     "nama": p["nama_produk"],
                     "qty": qty,
-                    "harga": p["harga"],
-                    "harga_modal": p["harga_modal"] or 0,
+                    "harga": float(p["harga"]),
+                    "harga_modal": float(p["harga_modal"] or 0),
                     "subtotal": subtotal,
                 })
 
-            if payment < total:
+            if float(payment) < total:
                 raise ValueError("Pembayaran kurang dari total")
 
-            kembalian = payment - total
-            tanggal = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            kembalian = float(payment) - total
+            tanggal = datetime.utcnow()
 
-            c.execute("""
+            # ✅ insert transaksi (PostgreSQL way)
+            cur.execute("""
                 INSERT INTO transaksi
                 (store_id, user_id, tanggal, total, bayar, kembalian, metode)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
             """, (store_id, user_id, tanggal, total, payment, kembalian, metode))
-            trx_id = c.lastrowid
 
+            trx_id = cur.fetchone()["id"]
+
+            # insert detail + update stok + mutasi
             for item in items_detail:
-                c.execute("""
+
+                # detail transaksi
+                cur.execute("""
                     INSERT INTO detail_transaksi
                     (transaksi_id, produk_id, qty, harga, harga_modal, subtotal)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (trx_id, item["product_id"], item["qty"], item["harga"],
-                      item["harga_modal"], item["subtotal"]))
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                """, (
+                    trx_id,
+                    item["product_id"],
+                    item["qty"],
+                    item["harga"],
+                    item["harga_modal"],
+                    item["subtotal"]
+                ))
 
-                c.execute("""
-                    UPDATE produk SET stok = stok - ? WHERE id=? AND store_id=?
-                """, (item["qty"], item["product_id"], store_id))
+                # update stok
+                cur.execute("""
+                    UPDATE produk
+                    SET stok = stok - %s
+                    WHERE id = %s AND store_id = %s
+                """, (
+                    item["qty"],
+                    item["product_id"],
+                    store_id
+                ))
 
-                c.execute("""
+                # mutasi stok
+                cur.execute("""
                     INSERT INTO stok_mutasi
                     (produk_id, store_id, tipe, qty, keterangan, user_id, tanggal)
-                    VALUES (?, ?, 'penjualan', ?, ?, ?, ?)
-                """, (item["product_id"], store_id, -item["qty"],
-                      f"Terjual di transaksi #{trx_id}", user_id, tanggal))
-
-            conn.commit()
+                    VALUES (%s, %s, 'penjualan', %s, %s, %s, %s)
+                """, (
+                    item["product_id"],
+                    store_id,
+                    -item["qty"],
+                    f"Terjual di transaksi #{trx_id}",
+                    user_id,
+                    tanggal
+                ))
 
             return {
                 "id": trx_id,
@@ -98,58 +117,48 @@ class TransactionService:
                 "tanggal": tanggal,
             }
 
-        except Exception:
-            conn.rollback()
-            raise
-        finally:
-            conn.close()
-
+    # ================= GET ALL =================
     def get_all(self, store_id, start_date=None, end_date=None):
-        conn = connect()
-        c = conn.cursor()
 
         query = """
             SELECT id, total, bayar, kembalian, metode, tanggal
-            FROM transaksi WHERE store_id=?
+            FROM transaksi
+            WHERE store_id = %s
         """
         params = [store_id]
 
         if start_date:
-            query += " AND date(tanggal) >= date(?)"
+            query += " AND DATE(tanggal) >= %s"
             params.append(start_date)
+
         if end_date:
-            query += " AND date(tanggal) <= date(?)"
+            query += " AND DATE(tanggal) <= %s"
             params.append(end_date)
 
         query += " ORDER BY id DESC"
 
-        c.execute(query, params)
-        rows = [dict(r) for r in c.fetchall()]
-        conn.close()
-        return rows
+        return fetch_all(query, params)
 
+    # ================= GET DETAIL =================
     def get_detail(self, trx_id, store_id):
-        conn = connect()
-        c = conn.cursor()
 
-        c.execute("""
-            SELECT * FROM transaksi WHERE id=? AND store_id=?
+        trx = fetch_one("""
+            SELECT *
+            FROM transaksi
+            WHERE id = %s AND store_id = %s
         """, (trx_id, store_id))
-        trx = c.fetchone()
 
         if not trx:
-            conn.close()
             return None
 
-        c.execute("""
-            SELECT dt.*, p.nama_produk
+        items = fetch_all("""
+            SELECT 
+                dt.*,
+                p.nama_produk
             FROM detail_transaksi dt
             LEFT JOIN produk p ON p.id = dt.produk_id
-            WHERE dt.transaksi_id=?
+            WHERE dt.transaksi_id = %s
         """, (trx_id,))
-        items = [dict(r) for r in c.fetchall()]
-        conn.close()
 
-        result = dict(trx)
-        result["items"] = items
-        return result
+        trx["items"] = items
+        return trx

@@ -1,7 +1,7 @@
 import os
-import sqlite3
 import psycopg2
-import psycopg2.extras
+from psycopg2 import pool, extras
+from contextlib import contextmanager
 import hashlib
 import secrets
 from datetime import datetime
@@ -9,225 +9,213 @@ from datetime import datetime
 # ================= CONFIG =================
 DATABASE_URL = os.getenv("DATABASE_URL")
 
-# Fix Railway format
-if DATABASE_URL and DATABASE_URL.startswith("postgres://"):
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is required (PostgreSQL only)")
+
+if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
-DB_PATH = os.path.join(os.getcwd(), "database.db")
+
+# ================= CONNECTION POOL =================
+connection_pool = psycopg2.pool.SimpleConnectionPool(
+    minconn=1,
+    maxconn=10,
+    dsn=DATABASE_URL
+)
 
 
-# ================= PG WRAPPER =================
-class _PGCursorWrapper:
-    def __init__(self, cursor):
-        self._cursor = cursor
-
-    def execute(self, sql, params=None):
-        sql = qmark(sql, self._cursor.connection)
-        if params is None:
-            return self._cursor.execute(sql)
-        return self._cursor.execute(sql, params)
-
-    def executemany(self, sql, seq_of_params):
-        return self._cursor.executemany(
-            qmark(sql, self._cursor.connection),
-            seq_of_params
-        )
-
-    def __getattr__(self, name):
-        return getattr(self._cursor, name)
-
-    def __iter__(self):
-        return iter(self._cursor)
+def get_conn():
+    return connection_pool.getconn()
 
 
-class _PGConnWrapper:
-    def __init__(self, conn):
-        self._conn = conn
-
-    def cursor(self, *args, **kwargs):
-        kwargs.setdefault("cursor_factory", psycopg2.extras.RealDictCursor)
-        return _PGCursorWrapper(self._conn.cursor(*args, **kwargs))
-
-    def __getattr__(self, name):
-        return getattr(self._conn, name)
+def release_conn(conn):
+    connection_pool.putconn(conn)
 
 
-# ================= CONNECT =================
-def connect():
-    if DATABASE_URL:
-        print("✅ Using PostgreSQL")
-
-        conn = psycopg2.connect(DATABASE_URL)
-        conn.autocommit = False
-        return _PGConnWrapper(conn)
-
-    print("⚠️ Using SQLite")
-
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-
-    return conn
+@contextmanager
+def get_cursor(commit=False):
+    conn = get_conn()
+    cur = conn.cursor(cursor_factory=extras.RealDictCursor)
+    try:
+        yield cur
+        if commit:
+            conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        cur.close()
+        release_conn(conn)
 
 
-# ================= HELPER =================
-def is_postgres(conn):
-    return hasattr(conn, "_conn")
+# ================= QUERY HELPERS =================
+def fetch_one(query, params=None):
+    with get_cursor() as cur:
+        cur.execute(query, params or ())
+        return cur.fetchone()
 
 
-def qmark(sql):
-    if DATABASE_URL:
-        return sql.replace("?", "%s")
-    return sql
+def fetch_all(query, params=None):
+    with get_cursor() as cur:
+        cur.execute(query, params or ())
+        return cur.fetchall()
+
+
+def execute(query, params=None):
+    with get_cursor(commit=True) as cur:
+        cur.execute(query, params or ())
+
+
+def executemany(query, params_list):
+    with get_cursor(commit=True) as cur:
+        cur.executemany(query, params_list)
 
 
 # ================= INIT =================
 def init_db():
     try:
-        conn = connect()
-        c = conn.cursor()
+        create_meta()
+        version = get_db_version()
 
-        create_meta(c)
-        version = get_db_version(c)
-
-        create_tables(c)
-        run_migrations(c, version)
-        seed_all(c)
-
-        conn.commit()
-        conn.close()
+        create_tables()
+        run_migrations(version)
+        seed_all()
 
         print("✅ DB INIT SUCCESS")
 
     except Exception as e:
         print("❌ DB INIT ERROR:", e)
+        raise
 
 
 # ================= META =================
-def create_meta(c):
-    c.execute(qmark("""
-    CREATE TABLE IF NOT EXISTS meta (
-        key TEXT PRIMARY KEY,
-        value TEXT
-    )
-    """))
+def create_meta():
+    execute("""
+        CREATE TABLE IF NOT EXISTS meta (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    """)
 
 
-def get_db_version(c):
-    c.execute(qmark("SELECT value FROM meta WHERE key=?"), ("db_version",))
-    row = c.fetchone()
+def get_db_version():
+    row = fetch_one("SELECT value FROM meta WHERE key = %s", ("db_version",))
 
     if row:
-        return int(row[0] if isinstance(row, tuple) else row["value"])
+        return int(row["value"])
 
-    c.execute(qmark("INSERT INTO meta (key, value) VALUES (?, ?)"), ("db_version", "0"))
+    execute(
+        "INSERT INTO meta (key, value) VALUES (%s, %s)",
+        ("db_version", "0")
+    )
     return 0
 
 
-def set_db_version(c, version):
-    c.execute(qmark("UPDATE meta SET value=? WHERE key=?"), (str(version), "db_version"))
+def set_db_version(version):
+    execute(
+        "UPDATE meta SET value = %s WHERE key = %s",
+        (str(version), "db_version")
+    )
 
 
 # ================= TABLES =================
-def create_tables(c):
-    auto_id = "SERIAL PRIMARY KEY" if DATABASE_URL else "INTEGER PRIMARY KEY AUTOINCREMENT"
-
-    c.execute(f"""
-    CREATE TABLE IF NOT EXISTS users (
-        id {auto_id},
-        username TEXT UNIQUE,
-        password TEXT,
-        password_salt TEXT,
-        role TEXT,
-        store_id INTEGER
-    )
+def create_tables():
+    execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            id SERIAL PRIMARY KEY,
+            username TEXT UNIQUE,
+            password TEXT,
+            password_salt TEXT,
+            role TEXT,
+            store_id INTEGER,
+            token TEXT,
+            created_at TIMESTAMP,
+            last_login TIMESTAMP
+        )
     """)
 
-    c.execute(f"""
-    CREATE TABLE IF NOT EXISTS stores (
-        id {auto_id},
-        name TEXT,
-        owner_id INTEGER
-    )
+    execute("""
+        CREATE TABLE IF NOT EXISTS stores (
+            id SERIAL PRIMARY KEY,
+            name TEXT,
+            owner_id INTEGER
+        )
     """)
 
-    c.execute(f"""
-    CREATE TABLE IF NOT EXISTS kategori (
-        id {auto_id},
-        nama TEXT,
-        parent TEXT
-    )
+    execute("""
+        CREATE TABLE IF NOT EXISTS kategori (
+            id SERIAL PRIMARY KEY,
+            nama TEXT,
+            parent TEXT
+        )
     """)
 
-    c.execute(f"""
-    CREATE TABLE IF NOT EXISTS produk (
-        id {auto_id},
-        store_id INTEGER,
-        nama_produk TEXT,
-        harga REAL,
-        harga_modal REAL DEFAULT 0,
-        stok REAL DEFAULT 0,
-        stok_minim REAL DEFAULT 5,
-        satuan TEXT,
-        gambar TEXT,
-        kategori_id INTEGER,
-        favorit INTEGER DEFAULT 0,
-        created_at TEXT
-    )
+    execute("""
+        CREATE TABLE IF NOT EXISTS produk (
+            id SERIAL PRIMARY KEY,
+            store_id INTEGER,
+            nama_produk TEXT,
+            harga NUMERIC,
+            harga_modal NUMERIC DEFAULT 0,
+            stok NUMERIC DEFAULT 0,
+            stok_minim NUMERIC DEFAULT 5,
+            satuan TEXT,
+            gambar TEXT,
+            kategori_id INTEGER,
+            favorit INTEGER DEFAULT 0,
+            created_at TIMESTAMP
+        )
     """)
 
-    c.execute(f"""
-    CREATE TABLE IF NOT EXISTS transaksi (
-        id {auto_id},
-        store_id INTEGER,
-        user_id INTEGER,
-        tanggal TEXT,
-        total REAL,
-        bayar REAL,
-        kembalian REAL,
-        metode TEXT
-    )
+    execute("""
+        CREATE TABLE IF NOT EXISTS transaksi (
+            id SERIAL PRIMARY KEY,
+            store_id INTEGER,
+            user_id INTEGER,
+            tanggal TIMESTAMP,
+            total NUMERIC,
+            bayar NUMERIC,
+            kembalian NUMERIC,
+            metode TEXT
+        )
     """)
 
-    c.execute(f"""
-    CREATE TABLE IF NOT EXISTS detail_transaksi (
-        id {auto_id},
-        transaksi_id INTEGER,
-        produk_id INTEGER,
-        qty REAL,
-        harga REAL,
-        harga_modal REAL DEFAULT 0,
-        subtotal REAL
-    )
+    execute("""
+        CREATE TABLE IF NOT EXISTS detail_transaksi (
+            id SERIAL PRIMARY KEY,
+            transaksi_id INTEGER,
+            produk_id INTEGER,
+            qty NUMERIC,
+            harga NUMERIC,
+            harga_modal NUMERIC DEFAULT 0,
+            subtotal NUMERIC
+        )
     """)
 
-    c.execute(f"""
-    CREATE TABLE IF NOT EXISTS stok_mutasi (
-        id {auto_id},
-        produk_id INTEGER,
-        store_id INTEGER,
-        tipe TEXT,
-        qty REAL,
-        keterangan TEXT,
-        user_id INTEGER,
-        tanggal TEXT
-    )
+    execute("""
+        CREATE TABLE IF NOT EXISTS stok_mutasi (
+            id SERIAL PRIMARY KEY,
+            produk_id INTEGER,
+            store_id INTEGER,
+            tipe TEXT,
+            qty NUMERIC,
+            keterangan TEXT,
+            user_id INTEGER,
+            tanggal TIMESTAMP
+        )
     """)
 
 
 # ================= MIGRATIONS =================
-def run_migrations(c, version):
+def run_migrations(version):
     if version < 1:
-        c.execute(qmark("CREATE INDEX IF NOT EXISTS idx_produk_store ON produk(store_id)"))
-        c.execute(qmark("CREATE INDEX IF NOT EXISTS idx_transaksi_store ON transaksi(store_id)"))
-        set_db_version(c, 1)
+        execute("CREATE INDEX IF NOT EXISTS idx_produk_store ON produk(store_id)")
+        execute("CREATE INDEX IF NOT EXISTS idx_transaksi_store ON transaksi(store_id)")
+        set_db_version(1)
 
     if version < 5:
-        c.execute(qmark("CREATE INDEX IF NOT EXISTS idx_mutasi_produk ON stok_mutasi(produk_id)"))
-        set_db_version(c, 5)
+        execute("CREATE INDEX IF NOT EXISTS idx_mutasi_produk ON stok_mutasi(produk_id)")
+        set_db_version(5)
 
 
 # ================= PASSWORD =================
@@ -244,34 +232,37 @@ def hash_password_legacy(password):
 
 
 # ================= SEED =================
-def seed_all(c):
-    seed_store(c)
-    seed_user(c)
-    seed_kategori(c)
+def seed_all():
+    seed_store()
+    seed_user()
+    seed_kategori()
 
 
-def seed_store(c):
-    c.execute(qmark("SELECT id FROM stores WHERE id=?"), (1,))
-    if not c.fetchone():
-        c.execute(qmark("INSERT INTO stores (name, owner_id) VALUES (?, ?)"), ("Toko Utama", 1))
+def seed_store():
+    row = fetch_one("SELECT id FROM stores WHERE id = %s", (1,))
+    if not row:
+        execute(
+            "INSERT INTO stores (name, owner_id) VALUES (%s, %s)",
+            ("Toko Utama", 1)
+        )
 
 
-def seed_user(c):
-    c.execute(qmark("SELECT id FROM users WHERE username=?"), ("admin",))
-    if not c.fetchone():
+def seed_user():
+    row = fetch_one("SELECT id FROM users WHERE username = %s", ("admin",))
+    if not row:
         print("🔥 Seeding admin...")
         h, salt = hash_password("123")
-        c.execute(qmark("""
-        INSERT INTO users (username, password, password_salt, role, store_id)
-        VALUES (?, ?, ?, 'owner', 1)
-        """), ("admin", h, salt))
+
+        execute("""
+            INSERT INTO users (username, password, password_salt, role, store_id, created_at)
+            VALUES (%s, %s, %s, %s, %s, %s)
+        """, ("admin", h, salt, "owner", 1, datetime.utcnow()))
 
 
-def seed_kategori(c):
-    c.execute(qmark("SELECT COUNT(*) FROM kategori"))
-    count = c.fetchone()[0]
+def seed_kategori():
+    row = fetch_one("SELECT COUNT(*) AS count FROM kategori")
 
-    if count > 0:
+    if row["count"] > 0:
         return
 
     data = [
@@ -282,9 +273,12 @@ def seed_kategori(c):
         ("Snack", "Retail"),
     ]
 
-    c.executemany(qmark("INSERT INTO kategori (nama, parent) VALUES (?, ?)"), data)
+    executemany(
+        "INSERT INTO kategori (nama, parent) VALUES (%s, %s)",
+        data
+    )
 
 
 # ================= HELPER =================
 def now():
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.utcnow()

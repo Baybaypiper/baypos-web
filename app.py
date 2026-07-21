@@ -2,16 +2,26 @@ import os
 from functools import wraps
 from flask import Flask, render_template, request, redirect, url_for, session, jsonify
 
-from database import init_db
+from db import init_db
 from services.auth_service import AuthService
 from services.product_service import ProductService
 from services.transaction_service import TransactionService
 from services.stock_service import StockService
 from services.report_service import ReportService
 
+
 # ================= CONFIG =================
 app = Flask(__name__, static_folder="static")
+
 app.secret_key = os.environ.get("BAYPOS_SECRET", "dev-secret-ganti")
+
+# 🔒 Production hardening
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=bool(os.getenv("RAILWAY_ENVIRONMENT")),  # HTTPS only in prod
+)
+
 
 # ================= INIT =================
 auth_service = AuthService()
@@ -20,17 +30,13 @@ transaction_service = TransactionService()
 stock_service = StockService()
 report_service = ReportService()
 
-# SAFE INIT DB (BIAR GAK CRASH DI RAILWAY)
-try:
-    init_db()
-    print("✅ DB INIT SUCCESS")
-except Exception as e:
-    print("❌ DB INIT ERROR:", e)
+# 🔥 INIT DB (fail fast)
+init_db()
 
 
-# ================= HEALTH CHECK =================
+# ================= HEALTH =================
 @app.route("/healthz")
-def health_check():
+def health():
     return "OK", 200
 
 
@@ -69,9 +75,11 @@ def login():
     password = request.form.get("password", "")
 
     user = auth_service.login(username, password)
+
     if not user:
         return render_template("login.html", error="Username / password salah")
 
+    session.clear()
     session.update({
         "user_id": user["id"],
         "username": user["username"],
@@ -344,14 +352,7 @@ def api_pengguna_delete(uid):
         return jsonify({"error": str(e)}), 400
 
 
-# ================= RUN (LOCAL ONLY) =================
+# ================= RUN =================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=True)
-
-
-from flask import send_from_directory
-
-@app.route('/static/<path:filename>')
-def static_files(filename):
-    return send_from_directory('static', filename)

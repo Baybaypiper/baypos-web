@@ -1,153 +1,121 @@
-from database import connect, hash_password, hash_password_legacy
+from db import fetch_one, fetch_all, execute
+from db import hash_password, hash_password_legacy
+from datetime import datetime
 
 
 class AuthService:
 
     # ================= LOGIN =================
     def login(self, username, password):
-        conn = connect()
-        c = conn.cursor()
+        user = fetch_one("""
+            SELECT id, username, role, store_id, password, password_salt
+            FROM users
+            WHERE username = %s
+        """, (username,))
 
-        try:
-            c.execute("""
-                SELECT id, username, role, store_id, password, password_salt
-                FROM users WHERE username=?
-            """, (username,))
-            user = c.fetchone()
+        if not user:
+            return None
 
-            if not user:
-                return None
+        valid = False
 
-            valid = False
+        # ===== CHECK PASSWORD =====
+        if user["password_salt"]:
+            # NEW SYSTEM (salted)
+            h, _ = hash_password(password, user["password_salt"])
+            valid = (h == user["password"])
 
-            # ================= CHECK PASSWORD =================
-            if user["password_salt"]:
-                # NEW SYSTEM (salted)
-                h, _ = hash_password(password, user["password_salt"])
-                valid = (h == user["password"])
+        else:
+            # LEGACY SYSTEM (no salt)
+            if user["password"] == hash_password_legacy(password):
+                valid = True
 
-            else:
-                # LEGACY SYSTEM (no salt)
-                if user["password"] == hash_password_legacy(password):
-                    valid = True
+                # AUTO UPGRADE KE SALTED
+                new_hash, new_salt = hash_password(password)
 
-                    # AUTO UPGRADE KE SALTED
-                    new_hash, new_salt = hash_password(password)
-                    c.execute("""
-                        UPDATE users 
-                        SET password=?, password_salt=? 
-                        WHERE id=?
-                    """, (new_hash, new_salt, user["id"]))
-                    conn.commit()
+                execute("""
+                    UPDATE users
+                    SET password = %s, password_salt = %s
+                    WHERE id = %s
+                """, (new_hash, new_salt, user["id"]))
 
-            if not valid:
-                return None
+        if not valid:
+            return None
 
-            return {
-                "id": user["id"],
-                "username": user["username"],
-                "role": user["role"],
-                "store_id": user["store_id"],
-            }
+        # OPTIONAL: update last_login
+        execute("""
+            UPDATE users
+            SET last_login = %s
+            WHERE id = %s
+        """, (datetime.utcnow(), user["id"]))
 
-        finally:
-            conn.close()
+        return {
+            "id": user["id"],
+            "username": user["username"],
+            "role": user["role"],
+            "store_id": user["store_id"],
+        }
 
     # ================= REGISTER =================
     def register(self, username, password, role="kasir", store_id=1):
-        conn = connect()
-        c = conn.cursor()
-
         username = (username or "").strip()
 
         if not username or not password:
-            conn.close()
             raise ValueError("Username & password wajib diisi")
 
         h, salt = hash_password(password)
 
         try:
-            c.execute("""
-                INSERT INTO users (username, password, password_salt, role, store_id)
-                VALUES (?, ?, ?, ?, ?)
-            """, (username, h, salt, role, store_id))
-
-            conn.commit()
+            execute("""
+                INSERT INTO users (username, password, password_salt, role, store_id, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s)
+            """, (username, h, salt, role, store_id, datetime.utcnow()))
 
         except Exception:
             raise ValueError("Username sudah dipakai")
 
-        finally:
-            conn.close()
-
     # ================= LIST USERS =================
     def list_users(self, store_id):
-        conn = connect()
-        c = conn.cursor()
+        rows = fetch_all("""
+            SELECT id, username, role
+            FROM users
+            WHERE store_id = %s
+            ORDER BY username
+        """, (store_id,))
 
-        try:
-            c.execute("""
-                SELECT id, username, role 
-                FROM users 
-                WHERE store_id=? 
-                ORDER BY username
-            """, (store_id,))
-
-            return [dict(r) for r in c.fetchall()]
-
-        finally:
-            conn.close()
+        return rows  # sudah dict dari RealDictCursor
 
     # ================= DELETE USER =================
     def delete_user(self, user_id, store_id):
-        conn = connect()
-        c = conn.cursor()
+        execute("""
+            DELETE FROM users
+            WHERE id = %s AND store_id = %s
+        """, (user_id, store_id))
 
-        try:
-            c.execute("""
-                DELETE FROM users 
-                WHERE id=? AND store_id=?
-            """, (user_id, store_id))
-
-            conn.commit()
-
-        finally:
-            conn.close()
-
-    # ================= OPTIONAL: CHANGE PASSWORD =================
+    # ================= CHANGE PASSWORD =================
     def change_password(self, user_id, old_password, new_password):
-        conn = connect()
-        c = conn.cursor()
+        user = fetch_one("""
+            SELECT password, password_salt
+            FROM users
+            WHERE id = %s
+        """, (user_id,))
 
-        try:
-            c.execute("""
-                SELECT password, password_salt 
-                FROM users WHERE id=?
-            """, (user_id,))
-            user = c.fetchone()
+        if not user:
+            raise ValueError("User tidak ditemukan")
 
-            if not user:
-                raise ValueError("User tidak ditemukan")
+        # ===== VALIDASI PASSWORD LAMA =====
+        if user["password_salt"]:
+            h, _ = hash_password(old_password, user["password_salt"])
+            if h != user["password"]:
+                raise ValueError("Password lama salah")
+        else:
+            if hash_password_legacy(old_password) != user["password"]:
+                raise ValueError("Password lama salah")
 
-            # cek password lama
-            if user["password_salt"]:
-                h, _ = hash_password(old_password, user["password_salt"])
-                if h != user["password"]:
-                    raise ValueError("Password lama salah")
-            else:
-                if hash_password_legacy(old_password) != user["password"]:
-                    raise ValueError("Password lama salah")
+        # ===== UPDATE PASSWORD BARU =====
+        new_hash, new_salt = hash_password(new_password)
 
-            # update password baru
-            new_hash, new_salt = hash_password(new_password)
-
-            c.execute("""
-                UPDATE users 
-                SET password=?, password_salt=? 
-                WHERE id=?
-            """, (new_hash, new_salt, user_id))
-
-            conn.commit()
-
-        finally:
-            conn.close()
+        execute("""
+            UPDATE users
+            SET password = %s, password_salt = %s
+            WHERE id = %s
+        """, (new_hash, new_salt, user_id))

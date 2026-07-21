@@ -1,6 +1,5 @@
 import os
 import sqlite3
-import psycopg2
 import hashlib
 import secrets
 from datetime import datetime

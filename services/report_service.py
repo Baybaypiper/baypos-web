@@ -1,3 +1,4 @@
+from datetime import date
 from database import connect
 
 
@@ -16,11 +17,11 @@ class ReportService:
         params = [store_id]
 
         if start_date:
-            query += " AND date(t.tanggal) >= date(?)"
+            query += " AND t.tanggal >= ?"
             params.append(start_date)
         if end_date:
-            query += " AND date(t.tanggal) <= date(?)"
-            params.append(end_date)
+            query += " AND t.tanggal <= ?"
+            params.append(end_date + " 23:59:59")
 
         c.execute(query, params)
         rows = c.fetchall()
@@ -58,11 +59,11 @@ class ReportService:
         params = [store_id]
 
         if start_date:
-            query += " AND date(t.tanggal) >= date(?)"
+            query += " AND t.tanggal >= ?"
             params.append(start_date)
         if end_date:
-            query += " AND date(t.tanggal) <= date(?)"
-            params.append(end_date)
+            query += " AND t.tanggal <= ?"
+            params.append(end_date + " 23:59:59")
 
         query += " GROUP BY dt.produk_id ORDER BY total_qty DESC LIMIT ?"
         params.append(limit)
@@ -76,11 +77,12 @@ class ReportService:
         conn = connect()
         c = conn.cursor()
 
+        today_str = date.today().strftime("%Y-%m-%d")
         c.execute("""
             SELECT COALESCE(SUM(total), 0) as omzet, COUNT(*) as jumlah
             FROM transaksi
-            WHERE store_id=? AND date(tanggal) = date('now', 'localtime')
-        """, (store_id,))
+            WHERE store_id=? AND tanggal LIKE ?
+        """, (store_id, today_str + "%"))
         today = dict(c.fetchone())
 
         c.execute("""

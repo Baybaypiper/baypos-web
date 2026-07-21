@@ -1,5 +1,7 @@
 import os
 import sqlite3
+import psycopg2
+import psycopg2.extras
 import hashlib
 import secrets
 from datetime import datetime
@@ -12,12 +14,47 @@ DB_PATH = os.environ.get(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "baypos.db")
 )
 
+# ================= PG COMPAT WRAPPER =================
+class _PGCursorWrapper:
+    """Bikin cursor psycopg2 nerima placeholder '?' kayak sqlite3, biar
+    query yang udah ditulis pakai '?' di services/*.py gak perlu diubah."""
+    def __init__(self, cursor):
+        self._cursor = cursor
+
+    def execute(self, sql, params=None):
+        sql = qmark(sql)
+        if params is None:
+            return self._cursor.execute(sql)
+        return self._cursor.execute(sql, params)
+
+    def executemany(self, sql, seq_of_params):
+        return self._cursor.executemany(qmark(sql), seq_of_params)
+
+    def __getattr__(self, name):
+        return getattr(self._cursor, name)
+
+    def __iter__(self):
+        return iter(self._cursor)
+
+
+class _PGConnWrapper:
+    def __init__(self, conn):
+        self._conn = conn
+
+    def cursor(self, *args, **kwargs):
+        kwargs.setdefault("cursor_factory", psycopg2.extras.RealDictCursor)
+        return _PGCursorWrapper(self._conn.cursor(*args, **kwargs))
+
+    def __getattr__(self, name):
+        return getattr(self._conn, name)
+
+
 # ================= CONNECT =================
 def connect():
     if DATABASE_URL:
         conn = psycopg2.connect(DATABASE_URL)
         conn.autocommit = False
-        return conn
+        return _PGConnWrapper(conn)
     else:
         conn = sqlite3.connect(DB_PATH)
         conn.row_factory = sqlite3.Row
@@ -193,6 +230,9 @@ def hash_password(password, salt=None):
 
     hashed = hashlib.sha256((salt + password).encode()).hexdigest()
     return hashed, salt
+
+def hash_password_legacy(password):
+    return hashlib.sha256(password.encode()).hexdigest()
 
 # ================= SEED =================
 def seed_all(c):

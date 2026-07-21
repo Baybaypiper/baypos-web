@@ -78,8 +78,8 @@ def is_postgres(conn):
     return hasattr(conn, "_conn")
 
 
-def qmark(sql, conn=None):
-    if conn and hasattr(conn, "_conn"):
+def qmark(sql):
+    if DATABASE_URL:
         return sql.replace("?", "%s")
     return sql
 

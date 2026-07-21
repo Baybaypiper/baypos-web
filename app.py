@@ -9,8 +9,9 @@ from services.transaction_service import TransactionService
 from services.stock_service import StockService
 from services.report_service import ReportService
 
-app = Flask(__name__)
-app.secret_key = os.environ.get("BAYPOS_SECRET", "dev-secret-ganti-di-production")
+# ================= CONFIG =================
+app = Flask(__name__, static_folder="static")
+app.secret_key = os.environ.get("BAYPOS_SECRET", "dev-secret-ganti")
 
 # ================= INIT =================
 auth_service = AuthService()
@@ -19,7 +20,19 @@ transaction_service = TransactionService()
 stock_service = StockService()
 report_service = ReportService()
 
-init_db()
+# SAFE INIT DB (BIAR GAK CRASH DI RAILWAY)
+try:
+    init_db()
+    print("✅ DB INIT SUCCESS")
+except Exception as e:
+    print("❌ DB INIT ERROR:", e)
+
+
+# ================= HEALTH CHECK =================
+@app.route("/healthz")
+def health_check():
+    return "OK", 200
+
 
 # ================= AUTH HELPERS =================
 def login_required(f):
@@ -331,13 +344,7 @@ def api_pengguna_delete(uid):
         return jsonify({"error": str(e)}), 400
 
 
-# ================= HEALTH CHECK =================
-@app.route("/healthz")
-def health_check():
-    return "OK", 200
-
-
-# ================= RUN =================
+# ================= RUN (LOCAL ONLY) =================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port, debug=True)

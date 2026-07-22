@@ -1,4 +1,4 @@
-from db import fetch_one, fetch_all, execute
+from db import fetch_one, fetch_all, execute, get_cursor
 from datetime import datetime
 
 
@@ -75,26 +75,26 @@ class ProductService:
         if harga is None or float(harga) < 0:
             raise ValueError("Harga tidak valid")
 
-        row = fetch_one("""
-            INSERT INTO produk
-            (store_id, nama_produk, harga, harga_modal, stok, stok_minim,
-             satuan, gambar, kategori_id, created_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            RETURNING id
-        """, (
-            store_id,
-            nama.strip(),
-            float(harga),
-            float(harga_modal),
-            float(stok),
-            float(stok_minim),
-            satuan,
-            gambar,
-            kategori_id,
-            datetime.utcnow()
-        ))
-
-        return row["id"]
+        with get_cursor(commit=True) as cur:
+            cur.execute("""
+                INSERT INTO produk
+                (store_id, nama_produk, harga, harga_modal, stok, stok_minim,
+                 satuan, gambar, kategori_id, created_at)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            """, (
+                store_id,
+                nama.strip(),
+                float(harga),
+                float(harga_modal),
+                float(stok),
+                float(stok_minim),
+                satuan,
+                gambar,
+                kategori_id,
+                datetime.utcnow()
+            ))
+            return cur.fetchone()["id"]
 
     # ================= UPDATE =================
     def update(self, product_id, store_id, nama, harga, harga_modal=0,
